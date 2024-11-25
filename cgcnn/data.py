@@ -9,7 +9,7 @@ from functools import cache
 import os 
 from pymatgen.core import Structure
 
-def train_validate_test_loader(dataset, batch_size, train_ratio=None, val_ratio=0.1, test_ratio=0.1, collate_fn = default_collate):
+def train_validate_test_loader(dataset, batch_size, train_ratio=None, val_ratio=0.1, test_ratio=0.1, collate_fn = default_collate, pin_memory=False):
     total_size = len(dataset)
     if not train_ratio:
         train_ratio = 1 - (test_ratio+val_ratio)
@@ -23,9 +23,9 @@ def train_validate_test_loader(dataset, batch_size, train_ratio=None, val_ratio=
     val_sampler = SubsetRandomSampler(indices[train_size+1:-test_size])
     test_sampler = SubsetRandomSampler(indices[-train_size:])
 
-    train_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn) #can add num_workers, pin memory for faster cpu to gpu memory transfer 
-    val_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn) 
-    test_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=collate_fn)
+    train_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn, pin_memory=pin_memory) #can add num_workers, pin memory for faster cpu to gpu memory transfer 
+    val_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn, pin_memory=pin_memory) 
+    test_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=collate_fn, pin_memory=pin_memory)
 
     return train_loader, val_loader, test_loader 
 
@@ -44,14 +44,12 @@ def collate_pool(dataset_list):
 
         batch_target.append(target)
         batch_cif_ids.append(cif_id)
-
+        
     return (torch.cat(batch_atom_fea, dim=0),
             torch.cat(batch_nbr_fea, dim=0),
             torch.cat(batch_nbr_fea_index, dim=0),
-            torch.stack(crystal_atom_idx),
-            torch.stack(batch_target, dim=0),
-            batch_cif_ids
-            )
+            crystal_atom_idx), torch.stack(batch_target, dim=0), batch_cif_ids
+            
 
 def gaussian_basis_transform(distances, dmin, dmax, step, var=None):
     filter_vals = np.arange(dmin, dmax + step, step)
