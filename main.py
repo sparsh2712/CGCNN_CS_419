@@ -21,7 +21,7 @@ class Normalizer():
         return (tensor - self.mean)/self.std_dev
     
     def denorm(self, normed_tensor):
-        return normed_tensor * self.std + self.mean
+        return normed_tensor * self.std_dev + self.mean
     
     def state_dict(self):
         return {
@@ -48,10 +48,11 @@ class AverageMeter():
         self.sum += val*n
         self.count += n 
         self.avg = self.sum/self.count 
+
 def mae(prediction, target):
     return torch.mean(torch.abs(target - prediction))
 
-def train(train_loader, model, criterion, optimizer, epoch, normalizer, gpu):
+def train(train_loader, model, criterion, optimizer, epoch, normalizer):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -62,22 +63,13 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, gpu):
 
     for i, (input, target, _) in enumerate(train_loader):
         data_time.update(time.time() - end)
-        if gpu:
-            input_var = (Variable(input[0].cuda(non_blocking=True)),
-                         Variable(input[1].cuda(non_blocking=True)),
-                         input[2].cuda(non_blocking=True),
-                         [crys_idx.cuda(non_blocking=True) for crys_idx in input[3]])
-        else:
-            input_var = (Variable(input[0]),
-                         Variable(input[1]),
-                         input[2],
-                         input[3])
+        input_var = (Variable(input[0]),
+                        Variable(input[1]),
+                        input[2],
+                        input[3])
         target_normed = normalizer.norm(target)
-        if gpu:
-            target_var = Variable(target_normed.cuda(non_blocking=True))
-        else:
-            target_var = Variable(target_normed)
-        
+        target_var = Variable(target_normed)
+
         #compute output 
         output = model(*input_var)
         loss = criterion(output, target_var)
@@ -101,7 +93,7 @@ def train(train_loader, model, criterion, optimizer, epoch, normalizer, gpu):
                 f'MAE {mae_errors.val:.3f} ({mae_errors.avg:.3f})')
 
 
-def validate(val_loader, model, criterion, normalizer, gpu):
+def validate(val_loader, model, criterion, normalizer):
     batch_time = AverageMeter()
     losses = AverageMeter()
     mae_errors = AverageMeter()
@@ -110,26 +102,15 @@ def validate(val_loader, model, criterion, normalizer, gpu):
     end = time.time()
 
     for i, (input, target, batch_cif_ids) in enumerate(val_loader):
-        if gpu:
-            with torch.no_grad():
-                input_var = (Variable(input[0].cuda(non_blocking=True)),
-                             Variable(input[1].cuda(non_blocking=True)),
-                             input[2].cuda(non_blocking=True),
-                             [crys_idx.cuda(non_blocking=True) for crys_idx in input[3]])
-        else:
-            with torch.no_grad():
-                input_var = (Variable(input[0]),
-                             Variable(input[1]),
-                             input[2],
-                             input[3])
+        with torch.no_grad():
+            input_var = (Variable(input[0]),
+                        Variable(input[1]),
+                        input[2],
+                        input[3])
                 
         target_normed = normalizer.norm(target)
-        if gpu:
-            with torch.no_grad():
-                target_var = Variable(target_normed.cuda(non_blocking=True))
-        else:
-            with torch.no_grad():
-                target_var = Variable(target_normed)
+        with torch.no_grad():
+            target_var = Variable(target_normed)
         
         #compute output 
         output = model(*input_var)
@@ -156,21 +137,25 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
 
-def main(gpu=False):
+def mse(prediction, target):
+    return torch.mean((target - prediction) ** 2)
+
+
+
+def main():
     best_mae_error = 1e10
-    cif_dir = '/content/drive/MyDrive/data/cif_files'
-    atom_json_path = '/content/drive/MyDrive/data/atom_init.json'
-    id_prop_path = '/content/drive/MyDrive/data/id_prop.csv'
+    cif_dir = '/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/cif_files'
+    atom_json_path = '/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/atom_init.json'
+    id_prop_path = '/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/id_prop.csv'
     dataset = CIFDataset(cif_dir, atom_json_path, id_prop_path)
     collate_fn = collate_pool
     train_loader, test_loader, val_loader = train_validate_test_loader(
         dataset=dataset,
-        batch_size=256,
-        train_ratio=0.7,
-        val_ratio=0.15,
+        batch_size=64,
+        train_ratio=0.75,
+        val_ratio=0.1,
         test_ratio=0.15,
-        collate_fn=collate_fn,
-        pin_memory=True if gpu else False
+        collate_fn=collate_fn
     )
 
     #creating a normalizer object 
@@ -183,9 +168,6 @@ def main(gpu=False):
     orig_atom_fea_len = structures[0].shape[-1]
     nbr_fea_len = structures[1]. shape[-1]
     model = CGCNN(orig_atom_fea_len, nbr_fea_len)
-
-    if gpu:
-        model.cuda()
     
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), 0.01)
@@ -193,8 +175,8 @@ def main(gpu=False):
     scheduler = MultiStepLR(optimizer, gamma=0.1, milestones=[100])
 
     for epoch in range(30):
-        train(train_loader, model, criterion, optimizer, epoch, normalizer, gpu)
-        mae_error = validate(val_loader, model, criterion, normalizer, gpu)
+        train(train_loader, model, criterion, optimizer, epoch, normalizer)
+        mae_error = validate(val_loader, model, criterion, normalizer)
 
         if np.isnan(mae_error):
             print('Exit due to NaN')
@@ -216,10 +198,10 @@ def main(gpu=False):
     print('---------Evaluate Model on Test Set---------------')
     best_checkpoint = torch.load('model_best.pth.tar')
     model.load_state_dict(best_checkpoint['state_dict'])
-    validate(test_loader, model, criterion, normalizer, test=True)
+    validate(test_loader, model, criterion, normalizer)
 
 if __name__ == '__main__':
-    main(gpu=True)
+    main()
         
 
 
