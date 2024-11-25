@@ -58,9 +58,40 @@ class CGCNN(nn.Module):
     
     def pooling(self, atom_fea, crystal_atom_idx):
         summed_fea = [torch.mean(atom_fea[idx_map], dim=0,keepdim=True) for idx_map in crystal_atom_idx]
-        
+
         return torch.cat(summed_fea, dim=0)
     
+
+if __name__ == '__main__':
+    # Dummy Inputs
+    N_atoms = 5
+    N_neighbors = 3 
+    orig_atom_fea_len = 4
+    nbr_fea_len = 2
+    atom_fea_len = 6
+    crystal_count = 2
+
+    atom_fea = torch.rand(N_atoms, orig_atom_fea_len)
+    nbr_fea = torch.rand(N_atoms, N_neighbors, nbr_fea_len)
+    nbr_fea_idx = torch.randint(0, N_atoms, (N_atoms, N_neighbors))
+    crystal_atom_idx = [torch.tensor([0, 1]), torch.tensor([2, 3, 4])]
+
+    # Model Initialization
+    model = CGCNN(
+        orig_atom_fea_len=orig_atom_fea_len,
+        nbr_fea_len=nbr_fea_len,
+        atom_fea_len=atom_fea_len,
+        n_conv=3,
+        h_fea_len=8,
+        n_h=1,
+    )
+
+    # Forward Pass
+    try:
+        out = model(atom_fea, nbr_fea, nbr_fea_idx, crystal_atom_idx)
+        print(f"Output shape: {out.shape}")
+    except Exception as e:
+        print(f"Error during forward pass: {e}")
 
 
 
