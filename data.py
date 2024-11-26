@@ -9,53 +9,59 @@ from functools import cache
 import os 
 from pymatgen.core import Structure
 
-def train_validate_test_loader(dataset, batch_size, train_ratio=None, val_ratio=0.1, test_ratio=0.1, collate_fn = default_collate, pin_memory=False):
+def train_validate_test_loader(dataset, batch_size, train_ratio=None, val_ratio=0.1, test_ratio=0.1, 
+                               collate_fn=default_collate, train_size=None, test_size=None, val_size=None):
     total_size = len(dataset)
     if not train_ratio:
-        train_ratio = 1 - (test_ratio+val_ratio)
+        train_ratio = 1 - (test_ratio + val_ratio)
     
     indices = list(range(total_size))
-    train_size = int(train_ratio * total_size)
-    test_size = int(test_ratio * total_size)
+    train_size = train_size if train_size else int(train_ratio * total_size)
+    test_size = test_size if test_size else int(test_ratio * total_size)
+    val_size = val_size if val_size else int(val_ratio * total_size)
 
     train_sampler = SubsetRandomSampler(indices[:train_size])
-    val_sampler = SubsetRandomSampler(indices[train_size+1:-test_size])
-    test_sampler = SubsetRandomSampler(indices[-train_size:])
+    val_sampler = SubsetRandomSampler(indices[train_size:train_size + val_size])
+    test_sampler = SubsetRandomSampler(indices[-test_size:])
 
-    train_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn, pin_memory=pin_memory) #can add num_workers, pin memory for faster cpu to gpu memory transfer 
-    val_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn, pin_memory=pin_memory) 
-    test_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=collate_fn, pin_memory=pin_memory)
+    train_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn)
+    val_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn)
+    test_loader = DataLoader(dataset=dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=collate_fn)
 
-    return train_loader, val_loader, test_loader 
+    return train_loader, val_loader, test_loader
+
 
 
 def collate_pool(dataset_list):
-    batch_atom_fea, batch_nbr_fea, batch_nbr_fea_index, crystal_atom_idx, batch_target, batch_cif_ids= [], [], [], [], [], []
-
+    batch_atom_fea, batch_nbr_fea, batch_nbr_fea_idx, crystal_atom_idx, batch_target, batch_cif_ids = [], [], [], [], [], []
+    base_idx = 0
+    
     for i, ((atom_fea, nbr_fea, nbr_fea_idx), target, cif_id) in enumerate(dataset_list):
-        n_i = atom_fea.shape[0] #number of atoms in this crystal
+        n_i = atom_fea.shape[0]
         batch_atom_fea.append(atom_fea)
         batch_nbr_fea.append(nbr_fea)
-        batch_nbr_fea_index.append(nbr_fea_idx + i)
-
-        new_index = torch.LongTensor(np.arange(n_i) + i)
-        crystal_atom_idx.append(new_index)
+        batch_nbr_fea_idx.append(nbr_fea_idx + base_idx)
+        
+        new_idx = torch.LongTensor(np.arange(n_i) + base_idx)
+        crystal_atom_idx.append(new_idx)
 
         batch_target.append(target)
         batch_cif_ids.append(cif_id)
 
+        base_idx += n_i
+
     return (torch.cat(batch_atom_fea, dim=0),
             torch.cat(batch_nbr_fea, dim=0),
-            torch.cat(batch_nbr_fea_index, dim=0),
+            torch.cat(batch_nbr_fea_idx, dim=0),
             crystal_atom_idx), torch.stack(batch_target, dim=0), batch_cif_ids
+
             
 
 def gaussian_basis_transform(distances, dmin, dmax, step, var=None):
-    filter_vals = np.arange(dmin, dmax + step, step)
-    if var is None:
-        var = step
-    distances = distances.reshape(distances.shape[0],1)
-    return np.exp(-(distances - filter_vals) ** 2 / var ** 2)
+    filter = np.arange(dmin, dmax + step, step)
+    var = step if var is None else var
+    distances = np.expand_dims(distances, axis=-1)
+    return np.exp(-(distances - filter) ** 2 / var ** 2)
 
 class AtomicData:
     def __init__(self, path_to_atom_feature):
@@ -92,21 +98,13 @@ class CIFDataset(Dataset):
         neighbour_dist = []
 
         for atom_nbr in all_neighbours:
-            temp = []
-            temp_= []
-
             if len(atom_nbr) < self.max_neighbour:
                 print('not enough neighbours')
-                for nbr in atom_nbr:
-                    temp.append(nbr[2])
-                    temp_.append(nbr[1])
-                # creating dummy neighbours with zeros
-                neighbour_index.append(temp + [0] * (self.max_neighbour - len(atom_nbr)))
-                neighbour_dist.append(temp_ + [self.cutoff_radius + 1.0] * (self.max_neighbour - len(atom_nbr)))
+                neighbour_index.append(list(map(lambda x: x[2], atom_nbr)) + [0] * (self.max_neighbour - len(atom_nbr)))
+                neighbour_dist.append(list(map(lambda x: x[1], atom_nbr)) + [self.radius + 1.] * (self.max_neighbour - len(atom_nbr)))
             else:
-                for nbr in atom_nbr[:self.max_neighbour]:
-                    neighbour_index.append(nbr[2])
-                    neighbour_dist.append(nbr[1])
+                neighbour_index.append(list(map(lambda x: x[2], atom_nbr[:self.max_neighbour])))
+                neighbour_dist.append(list(map(lambda x: x[1], atom_nbr[:self.max_neighbour])))
         
         neighbour_index, neighbour_dist = np.array(neighbour_index), np.array(neighbour_dist)
         neighbour_dist = gaussian_basis_transform(neighbour_dist, self.dmin, self.cutoff_radius, self.step)
@@ -114,14 +112,14 @@ class CIFDataset(Dataset):
         atomic_features = np.vstack([self.atomic_data.get_atomic_data_features(crystal[i].specie.number) for i in range (len(crystal))])
         atomic_features = torch.Tensor(atomic_features)
         neighbour_dist = torch.Tensor(neighbour_dist)
-        neighbour_index = torch.Tensor(neighbour_index)
+        neighbour_index = torch.LongTensor(neighbour_index)
         target = torch.Tensor([float(property_value)])
 
         return (atomic_features, neighbour_dist, neighbour_index), target, cif_id
     
 if __name__ == "__main__":
     cif = CIFDataset(cif_dir='/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/cif_files', atom_json_path= '/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/atom_init.json', id_prop_path='/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/id_prop.csv')
-    print(cif[1])
+    print(cif[1]) 
 
 
 

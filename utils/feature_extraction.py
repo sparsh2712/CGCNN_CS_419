@@ -23,12 +23,12 @@ def get_feature_csv(df, feature_name):
         df_new = df[columns]
         df_new.rename(columns={feature_name: 'property_value'})
     
-    return df_new
+    return df_new 
 
 if __name__ == "__main__":
     df = pd.read_csv('/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/material_ids_with_prop.csv')
     df.rename(columns={'Unnamed: 0': 'Index'}, inplace=True)
-    df_new = get_feature_csv(df, 'bulk_modulus')
+    df_new = get_feature_csv(df, 'shear_modulus')
     df_new['numeric_ids'] = df_new['material_id'].str.extract(r'mp-(\d+)').astype(int)
     df_sorted = df_new.sort_values(by='numeric_ids').drop(columns='numeric_ids')
     df_sorted.to_csv('/Users/sparsh/Desktop/College core/CS_419/CGCNN_CS_419/data/id_prop.csv')
