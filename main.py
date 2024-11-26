@@ -191,7 +191,7 @@ def main():
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), 0.01)
 
-    scheduler = MultiStepLR(optimizer, gamma=0.1, milestones=[100])
+    scheduler = MultiStepLR(optimizer, gamma=0.1, milestones=[50])
 
     for epoch in range(70):
         train(train_loader, model, criterion, optimizer, epoch, normalizer)
